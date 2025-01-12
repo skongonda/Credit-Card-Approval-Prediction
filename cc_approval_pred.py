@@ -17,14 +17,50 @@ import requests
 from streamlit_lottie import st_lottie_spinner
 import logging
 from botocore.exceptions import ClientError
+import os
+from dotenv import load_dotenv
 
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load environment variables at startup
+load_dotenv()
+
+# Validate AWS credentials early
+AWS_ACCESS_KEY = os.getenv('AWS_ACCESS_KEY_ID')
+AWS_SECRET_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')  # Fixed variable name
+AWS_REGION = os.getenv('AWS_REGION', 'eu-west-1')  # Add region to env vars
+
+if not AWS_ACCESS_KEY or not AWS_SECRET_KEY:
+    logger.error("AWS credentials not found in environment variables")
+    raise ValueError("AWS credentials not properly configured in .env file")
+
+try:
+    # Initialize boto3 session with credentials check
+    session = boto3.Session(
+        aws_access_key_id=AWS_ACCESS_KEY,
+        aws_secret_access_key=AWS_SECRET_KEY,
+        region_name=AWS_REGION
+    )
+    
+    # Test credentials
+    sts = session.client('sts')
+    sts.get_caller_identity()
+    
+    # Create S3 client using the session
+    s3_client = session.client('s3')
+    
+except ClientError as e:
+    logger.error(f"AWS Authentication Error: {str(e)}")
+    raise ValueError("Failed to authenticate with AWS. Please check your credentials.")
 
 train_original = pd.read_csv(
-    ""
+    "https://raw.githubusercontent.com/skongonda/Credit-Card-Approval-Prediction/main/dataset/train.csv"
 )
 
 test_original = pd.read_csv(
-    ""
+    "https://raw.githubusercontent.com/skongonda/Credit-Card-Approval-Prediction/main/dataset/test.csv"
 )
 
 full_data = pd.concat([train_original, test_original], axis=0)
@@ -559,46 +595,36 @@ lottie_loading_an = load_lottieurl(
 )
 
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
 def make_prediction():
-    bucket_name = "creditapplipred"
+    bucket_name = "ccapprovalprediction"
     key = "gradient_boosting_model.sav"
 
-    client = boto3.client(
-        "s3",
-        aws_access_key_id=st.secrets["access_key"],
-        aws_secret_access_key=st.secrets["secret_access_key"],
-    )
-
     try:
-        # Test S3 access
-        logger.info(f"Attempting to list objects in {bucket_name}")
-        response = client.list_objects_v2(Bucket=bucket_name, MaxKeys=1)
-        logger.info("Successfully listed bucket contents")
-
-        logger.info(f"Attempting to download {key} from {bucket_name}")
+        # First verify bucket access
+        try:
+            s3_client.head_bucket(Bucket=bucket_name)
+        except ClientError as e:
+            error_code = int(e.response['Error']['Code'])
+            if error_code == 403:
+                logger.error(f"Access denied to bucket {bucket_name}. Check your IAM permissions.")
+                st.error("Access denied to model storage. Please check your AWS permissions.")
+                return None
+            elif error_code == 404:
+                logger.error(f"Bucket {bucket_name} does not exist")
+                st.error("Model storage location not found")
+                return None
+            
         with tempfile.TemporaryFile() as fp:
-            client.download_fileobj(Fileobj=fp, Bucket=bucket_name, Key=key)
-            logger.info("Successfully downloaded the file")
+            logger.info(f"Downloading model from {bucket_name}/{key}")
+            s3_client.download_fileobj(Fileobj=fp, Bucket=bucket_name, Key=key)
             fp.seek(0)
             model = joblib.load(fp)
-            logger.info("Successfully loaded the model")
-
-        return model.predict(profile_to_pred_prep)
+            logger.info("Model loaded successfully")
+            return model.predict(profile_to_pred_prep)
+            
     except ClientError as e:
-        error_code = e.response["Error"]["Code"]
-        error_message = e.response["Error"]["Message"]
-        logger.error(f"ClientError: {error_code} - {error_message}")
-        st.error(f"AWS Error: {error_code} - {error_message}")
-        if error_code == "AccessDenied":
-            st.error("Access Denied. Please check your AWS permissions.")
-        elif error_code == "NoSuchBucket":
-            st.error(f"The bucket {bucket_name} does not exist.")
-        elif error_code == "NoSuchKey":
-            st.error(f"The key {key} does not exist in the bucket.")
+        logger.error(f"AWS Error: {e.response['Error']['Code']} - {e.response['Error']['Message']}")
+        st.error("Failed to access the model. Please check your AWS permissions.")
         return None
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
