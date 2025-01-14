@@ -23,8 +23,6 @@
 - [Deployment on streamlit](#deployment-on-streamlit)
 - [App deployed on Streamlit](#app-deployed-on-streamlit)
 - [Repository structure](#repository-structure)
-- [Contribution](#contribution)
-- [License](#license)
 
 ## Business problem
 
@@ -104,7 +102,7 @@ git init
 Clone the project
 
 ```bash
-git clone https://github.com/semasuka/Credit-card-approval-prediction-classification.git
+https://github.com/skongonda/Credit-Card-Approval-Prediction.git
 ```
 
 enter the project directory
